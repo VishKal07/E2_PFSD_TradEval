@@ -1,5 +1,9 @@
-django
+Django
+gunicorn
+pymongo
+django-cors-headers
+yfinance
+pandas
 numpy
 scikit-learn
 joblib
-pymongo

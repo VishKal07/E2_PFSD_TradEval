@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeEval - Live Trading Simulator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- Chart.js for price charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --navy-deep: #0a1628; --navy-mid: #1a2940;
+            --sky-blue: #4a9eff; --electric-cyan: #00e5ff;
+            --gold-accent: #ffa726; --green: #00ff88; --red: #ff4757;
+            --white: #ffffff; --off-white: #f5f7fa; --gray-light: #8892a6;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'IBM Plex Sans',sans-serif; background:var(--navy-deep); color:var(--off-white); overflow-x:hidden; }
+
+        /* ── Header ── */
+        .header {
+            background:rgba(10,22,40,0.95); backdrop-filter:blur(10px);
+            border-bottom:1px solid rgba(74,158,255,0.2);
+            padding:1rem 2rem; display:flex; justify-content:space-between; align-items:center;
+            position:sticky; top:0; z-index:100;
+        }
+        .logo { font-family:'Orbitron',sans-serif; font-size:1.5rem; font-weight:900; color:var(--electric-cyan); letter-spacing:2px; text-transform:uppercase; }
+        .header-controls { display:flex; gap:1rem; align-items:center; }
+        .balance-display {
+            background:rgba(26,41,64,0.6); padding:0.5rem 1.5rem;
+            border-radius:25px; border:1px solid rgba(74,158,255,0.3);
+        }
+        .balance-label { font-size:0.8rem; color:var(--gray-light); }
+        .balance-amount { font-family:'IBM Plex Mono',monospace; font-size:1.2rem; font-weight:600; color:var(--green); }
+        .header-btn {
+            padding:0.6rem 1.5rem; background:rgba(74,158,255,0.2);
+            border:1px solid var(--sky-blue); color:var(--off-white);
+            border-radius:5px; cursor:pointer; font-size:0.9rem; transition:all 0.3s; text-decoration:none;
+            display:inline-flex; align-items:center; gap:0.5rem;
+        }
+        .header-btn:hover { background:rgba(74,158,255,0.4); transform:translateY(-2px); }
+        .market-status { display:flex; align-items:center; gap:0.5rem; }
+        .status-dot { width:8px; height:8px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+        .status-text { font-size:0.85rem; color:var(--green); }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+        /* ── Layout ── */
+        .main-container {
+            display:grid; grid-template-columns:250px 1fr 360px;
+            height:calc(100vh - 70px); gap:1px; background:rgba(74,158,255,0.1);
+        }
+
+        /* ── Sidebar ── */
+        .sidebar { background:var(--navy-mid); overflow-y:auto; border-right:1px solid rgba(74,158,255,0.2); }
+        .sidebar-header { padding:1.5rem 1rem; background:rgba(0,229,255,0.1); border-bottom:1px solid rgba(74,158,255,0.3); }
+        .sidebar-header h3 { font-family:'Orbitron',sans-serif; font-size:1rem; color:var(--electric-cyan); }
+        .search-box { margin-top:1rem; }
+        .search-box input {
+            width:100%; padding:0.5rem; background:rgba(10,22,40,0.6);
+            border:1px solid rgba(74,158,255,0.3); border-radius:5px;
+            color:var(--off-white); font-size:0.9rem;
+        }
+        .stock-list { list-style:none; }
+        .stock-item { padding:1rem; border-bottom:1px solid rgba(74,158,255,0.1); cursor:pointer; transition:all 0.2s; }
+        .stock-item:hover { background:rgba(74,158,255,0.1); }
+        .stock-item.active { background:rgba(0,229,255,0.2); border-left:3px solid var(--electric-cyan); }
+        .stock-symbol { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:0.95rem; color:var(--white); }
+        .stock-name { font-size:0.75rem; color:var(--gray-light); margin-top:0.2rem; }
+        .stock-price-mini { display:flex; justify-content:space-between; align-items:center; margin-top:0.5rem; }
+        .price-mini { font-family:'IBM Plex Mono',monospace; font-size:0.9rem; font-weight:500; }
+        .change-mini { font-size:0.8rem; font-weight:600; }
+        .positive { color:var(--green); }
+        .negative { color:var(--red); }
+
+        /* ── Chart Area ── */
+        .chart-area { background:var(--navy-deep); display:flex; flex-direction:column; }
+        .chart-header { padding:1.5rem 2rem; background:var(--navy-mid); border-bottom:1px solid rgba(74,158,255,0.2); }
+        .stock-title { display:flex; justify-content:space-between; align-items:flex-start; }
+        .stock-info h2 { font-family:'Orbitron',sans-serif; font-size:1.8rem; color:var(--white); margin-bottom:0.3rem; }
+        .stock-info .company-name { font-size:0.9rem; color:var(--gray-light); }
+        .price-display { text-align:right; }
+        .current-price { font-family:'IBM Plex Mono',monospace; font-size:2.5rem; font-weight:600; color:var(--white); }
+        .price-change { font-family:'IBM Plex Mono',monospace; font-size:1.1rem; font-weight:600; margin-top:0.3rem; }
+        .chart-controls { display:flex; gap:0.5rem; margin-top:1rem; align-items:center; }
+        .timeframe-btn {
+            padding:0.4rem 1rem; background:rgba(26,41,64,0.6);
+            border:1px solid rgba(74,158,255,0.2); color:var(--gray-light);
+            border-radius:5px; cursor:pointer; font-size:0.85rem; transition:all 0.2s;
+        }
+        .timeframe-btn:hover { background:rgba(74,158,255,0.2); color:var(--white); }
+        .timeframe-btn.active { background:var(--sky-blue); color:var(--white); border-color:var(--sky-blue); }
+        .load-btn {
+            padding:0.4rem 1.2rem; background:rgba(0,229,255,0.15);
+            border:1px solid var(--electric-cyan); color:var(--electric-cyan);
+            border-radius:5px; cursor:pointer; font-size:0.85rem; transition:all 0.2s; margin-left:auto;
+        }
+        .load-btn:hover { background:rgba(0,229,255,0.3); }
+        .chart-container { flex:1; padding:1.5rem; position:relative; min-height:0; }
+        #stockChart { width:100% !important; height:100% !important; }
+        .chart-loading {
+            position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+            background:rgba(10,22,40,0.7); color:var(--electric-cyan); font-family:'Orbitron',sans-serif;
+            font-size:0.9rem; letter-spacing:2px; border-radius:10px; display:none;
+        }
+
+        /* ── Right Panel ── */
+        .trading-panel { background:var(--navy-mid); overflow-y:auto; border-left:1px solid rgba(74,158,255,0.2); }
+        .panel-section { padding:1.5rem; border-bottom:1px solid rgba(74,158,255,0.1); }
+        .panel-section h3 { font-family:'Orbitron',sans-serif; font-size:0.95rem; color:var(--electric-cyan); margin-bottom:1rem; }
+        .trade-tabs { display:flex; gap:0.5rem; margin-bottom:1.5rem; }
+        .tab-btn {
+            flex:1; padding:0.7rem; background:rgba(26,41,64,0.6);
+            border:1px solid rgba(74,158,255,0.2); color:var(--gray-light);
+            cursor:pointer; font-weight:600; transition:all 0.2s;
+        }
+        .tab-btn.active { background:var(--green); color:var(--navy-deep); border-color:var(--green); }
+        .tab-btn.sell.active { background:var(--red); border-color:var(--red); color:var(--white); }
+        .form-group { margin-bottom:1rem; }
+        .form-group label { display:block; font-size:0.85rem; color:var(--gray-light); margin-bottom:0.5rem; }
+        .form-group input, .form-group select {
+            width:100%; padding:0.7rem; background:rgba(10,22,40,0.6);
+            border:1px solid rgba(74,158,255,0.3); border-radius:5px;
+            color:var(--white); font-family:'IBM Plex Mono',monospace; font-size:0.95rem;
+        }
+        .form-group input:focus, .form-group select:focus { outline:none; border-color:var(--electric-cyan); }
+        .trade-summary {
+            background:rgba(0,229,255,0.05); padding:1rem; border-radius:5px;
+            border:1px solid rgba(0,229,255,0.2); margin-bottom:1rem;
+        }
+        .summary-row { display:flex; justify-content:space-between; margin-bottom:0.5rem; font-size:0.9rem; }
+        .summary-row:last-child { margin-bottom:0; padding-top:0.5rem; border-top:1px solid rgba(74,158,255,0.2); font-weight:600; }
+        .trade-btn {
+            width:100%; padding:1rem; background:var(--green); border:none;
+            color:var(--navy-deep); font-weight:700; font-size:1rem;
+            border-radius:5px; cursor:pointer; transition:all 0.3s;
+        }
+        .trade-btn:hover { transform:translateY(-2px); box-shadow:0 10px 30px rgba(0,255,136,0.3); }
+        .trade-btn.sell { background:var(--red); color:var(--white); }
+        .trade-btn.sell:hover { box-shadow:0 10px 30px rgba(255,71,87,0.3); }
+        .trade-btn.blue { background:var(--sky-blue); color:var(--white); }
+        .trade-btn.blue:hover { box-shadow:0 10px 30px rgba(74,158,255,0.4); }
+        .trade-btn.gold { background:var(--gold-accent); color:var(--navy-deep); }
+        .trade-btn.gold:hover { box-shadow:0 10px 30px rgba(255,167,38,0.4); }
+
+        /* ── Positions ── */
+        .position-item {
+            background:rgba(26,41,64,0.6); padding:1rem; border-radius:5px;
+            margin-bottom:0.5rem; border-left:3px solid var(--sky-blue);
+        }
+        .position-header { display:flex; justify-content:space-between; margin-bottom:0.5rem; }
+        .position-symbol { font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--white); }
+        .position-pnl { font-family:'IBM Plex Mono',monospace; font-weight:600; }
+        .position-details { font-size:0.85rem; color:var(--gray-light); }
+
+        /* ── Stats Grid ── */
+        .stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; }
+        .stat-card { background:rgba(26,41,64,0.6); padding:0.8rem; border-radius:5px; border:1px solid rgba(74,158,255,0.2); }
+        .stat-label { font-size:0.75rem; color:var(--gray-light); margin-bottom:0.3rem; }
+        .stat-value { font-family:'IBM Plex Mono',monospace; font-size:1.1rem; font-weight:600; color:var(--white); }
+
+        /* ── Backtest Result ── */
+        .result-box {
+            background:rgba(10,22,40,0.6); border:1px solid rgba(74,158,255,0.2);
+            border-radius:5px; padding:1rem; margin-top:0.8rem;
+            font-family:'IBM Plex Mono',monospace; font-size:0.82rem;
+            color:var(--electric-cyan); white-space:pre-wrap; max-height:180px;
+            overflow-y:auto; display:none;
+        }
+        .result-box.visible { display:block; }
+        .result-row { display:flex; justify-content:space-between; padding:0.3rem 0; border-bottom:1px solid rgba(74,158,255,0.1); }
+        .result-row:last-child { border-bottom:none; }
+        .result-key { color:var(--gray-light); }
+        .result-val { color:var(--electric-cyan); font-weight:600; }
+        .result-val.positive { color:var(--green); }
+        .result-val.negative { color:var(--red); }
+
+        /* ── Risk Badge ── */
+        .risk-badge {
+            display:inline-block; padding:0.3rem 0.8rem; border-radius:20px;
+            font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:0.9rem;
+        }
+        .risk-low    { background:rgba(0,255,136,0.2); color:var(--green); border:1px solid var(--green); }
+        .risk-medium { background:rgba(255,167,38,0.2); color:var(--gold-accent); border:1px solid var(--gold-accent); }
+        .risk-high   { background:rgba(255,71,87,0.2); color:var(--red); border:1px solid var(--red); }
+
+        /* ── Order Book ── */
+        .orderbook { font-family:'IBM Plex Mono',monospace; font-size:0.85rem; }
+        .orderbook-header { display:grid; grid-template-columns:1fr 1fr 1fr; padding:0.5rem 0; border-bottom:1px solid rgba(74,158,255,0.2); color:var(--gray-light); font-size:0.75rem; }
+        .orderbook-row { display:grid; grid-template-columns:1fr 1fr 1fr; padding:0.4rem 0; border-bottom:1px solid rgba(74,158,255,0.1); }
+        .ask-side { color:var(--red); }
+        .bid-side { color:var(--green); }
+
+        /* ── Activity Feed ── */
+        .activity-feed { max-height:180px; overflow-y:auto; }
+        .activity-item { padding:0.8rem; border-bottom:1px solid rgba(74,158,255,0.1); font-size:0.85rem; }
+        .activity-time { font-family:'IBM Plex Mono',monospace; font-size:0.75rem; color:var(--gray-light); margin-bottom:0.3rem; }
+        .activity-text { color:var(--off-white); }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width:6px; }
+        ::-webkit-scrollbar-track { background:var(--navy-deep); }
+        ::-webkit-scrollbar-thumb { background:rgba(74,158,255,0.3); border-radius:3px; }
+
+        /* ── Responsive ── */
+        @media (max-width: 1200px) { .main-container { grid-template-columns:200px 1fr 300px; } }
+        @media (max-width: 968px) {
+            .main-container { grid-template-columns:1fr; grid-template-rows:auto 1fr auto; }
+            .sidebar, .trading-panel { max-height:400px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <div class="header">
+        <a href="tradeEval-website.html" style="text-decoration:none;"><div class="logo">TradeEval</div></a>
+        <div class="header-controls">
+            <a href="tradeEval-website.html" class="header-btn">← Back to Home</a>
+            <div class="market-status">
+                <div class="status-dot"></div>
+                <div class="status-text">Simulator Active</div>
+            </div>
+            <div class="balance-display">
+                <div class="balance-label">Portfolio Value</div>
+                <div class="balance-amount" id="portfolioValue">$100,000.00</div>
+            </div>
+            <button class="header-btn" onclick="resetSimulation()">Reset</button>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-container">
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3>MARKET WATCH</h3>
+                <div class="search-box">
+                    <input type="text" placeholder="Search stocks…" id="stockSearch">
+                </div>
+            </div>
+            <ul class="stock-list" id="stockList"></ul>
+        </div>
+
+        <!-- Chart Area -->
+        <div class="chart-area">
+            <div class="chart-header">
+                <div class="stock-title">
+                    <div class="stock-info">
+                        <h2 id="currentSymbol">AAPL</h2>
+                        <div class="company-name" id="currentCompany">Apple Inc.</div>
+                    </div>
+                    <div class="price-display">
+                        <div class="current-price" id="currentPrice">$175.43</div>
+                        <div class="price-change positive" id="priceChange">+2.35 (+1.36%)</div>
+                    </div>
+                </div>
+                <div class="chart-controls">
+                    <button class="timeframe-btn active" onclick="changeTimeframe(this,'1D')">1D</button>
+                    <button class="timeframe-btn" onclick="changeTimeframe(this,'5D')">5D</button>
+                    <button class="timeframe-btn" onclick="changeTimeframe(this,'1M')">1M</button>
+                    <button class="timeframe-btn" onclick="changeTimeframe(this,'3M')">3M</button>
+                    <button class="timeframe-btn" onclick="changeTimeframe(this,'1Y')">1Y</button>
+                    <button class="load-btn" onclick="loadRealData()">📡 Load Live Data</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="stockChart"></canvas>
+                <div class="chart-loading" id="chartLoading">LOADING DATA…</div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="trading-panel">
+
+            <!-- Trade Entry -->
+            <div class="panel-section">
+                <h3>TRADE ENTRY</h3>
+                <div class="trade-tabs">
+                    <button class="tab-btn active" onclick="switchTab('buy')">BUY</button>
+                    <button class="tab-btn sell" onclick="switchTab('sell')">SELL</button>
+                </div>
+                <div class="form-group">
+                    <label>Order Type</label>
+                    <select id="orderType">
+                        <option value="market">Market Order</option>
+                        <option value="limit">Limit Order</option>
+                        <option value="stop">Stop Order</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Quantity</label>
+                    <input type="number" id="quantity" value="10" min="1">
+                </div>
+                <div class="form-group" id="limitPriceGroup" style="display:none;">
+                    <label>Limit Price</label>
+                    <input type="number" id="limitPrice" step="0.01">
+                </div>
+                <div class="trade-summary">
+                    <div class="summary-row"><span>Price:</span><span id="summaryPrice">$175.43</span></div>
+                    <div class="summary-row"><span>Quantity:</span><span id="summaryQty">10</span></div>
+                    <div class="summary-row"><span>Commission:</span><span id="summaryCommission">$1.00</span></div>
+                    <div class="summary-row"><span>Total:</span><span id="summaryTotal">$1,755.30</span></div>
+                </div>
+                <button class="trade-btn" id="tradeBtn" onclick="executeTrade()">EXECUTE BUY ORDER</button>
+            </div>
+
+            <!-- Strategy Backtest -->
+            <div class="panel-section">
+                <h3>STRATEGY BACKTEST</h3>
+                <div class="form-group">
+                    <label>Symbol</label>
+                    <input id="backtestSymbol" value="AAPL">
+                </div>
+                <div class="form-group">
+                    <label>Strategy</label>
+                    <select id="backtestStrategy">
+                        <option value="moving_average">Moving Average</option>
+                        <option value="momentum">Momentum</option>
+                        <option value="mean_reversion">Mean Reversion</option>
+                        <option value="rsi">RSI Strategy</option>
+                    </select>
+                </div>
+                <button class="trade-btn blue" onclick="runBacktest()">▶ RUN BACKTEST</button>
+                <div class="result-box" id="backtestResult"></div>
+            </div>
+
+            <!-- AI Risk Prediction -->
+            <div class="panel-section">
+                <h3>AI RISK ANALYSIS</h3>
+                <p style="font-size:0.85rem;color:var(--gray-light);margin-bottom:1rem;">
+                    Analyse the risk level of the current position using the trained ML model.
+                </p>
+                <button class="trade-btn gold" onclick="predictRisk()">🛡 ANALYSE TRADE RISK</button>
+                <div class="result-box" id="riskResult"></div>
+            </div>
+
+            <!-- Positions -->
+            <div class="panel-section">
+                <h3>POSITIONS</h3>
+                <div id="positionsList"></div>
+            </div>
+
+            <!-- Market Stats -->
+            <div class="panel-section">
+                <h3>MARKET STATS</h3>
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-label">Volume</div><div class="stat-value" id="volume">—</div></div>
+                    <div class="stat-card"><div class="stat-label">Day High</div><div class="stat-value" id="dayHigh">—</div></div>
+                    <div class="stat-card"><div class="stat-label">Day Low</div><div class="stat-value" id="dayLow">—</div></div>
+                    <div class="stat-card"><div class="stat-label">52W High</div><div class="stat-value" id="yearHigh">—</div></div>
+                </div>
+            </div>
+
+            <!-- Order Book -->
+            <div class="panel-section">
+                <h3>ORDER BOOK</h3>
+                <div class="orderbook">
+                    <div class="orderbook-header"><span>Bid</span><span>Size</span><span>Ask</span></div>
+                    <div id="orderBookData"></div>
+                </div>
+            </div>
+
+            <!-- Activity Feed -->
+            <div class="panel-section">
+                <h3>ACTIVITY</h3>
+                <div class="activity-feed" id="activityFeed"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+    // ───────────────────────────────────────────────────────────────
+    // Configuration
+    // ───────────────────────────────────────────────────────────────
+    const API_BASE = 'http://127.0.0.1:8000/api';
+
+    const stocks = [
+        { symbol:'AAPL',  name:'Apple Inc.',        price:175.43, change: 2.35 },
+        { symbol:'GOOGL', name:'Alphabet Inc.',      price:142.68, change:-1.24 },
+        { symbol:'MSFT',  name:'Microsoft Corp.',    price:378.91, change: 5.67 },
+        { symbol:'AMZN',  name:'Amazon.com Inc.',    price:178.35, change: 3.21 },
+        { symbol:'TSLA',  name:'Tesla Inc.',         price:242.84, change:-4.56 },
+        { symbol:'META',  name:'Meta Platforms',     price:484.03, change: 8.92 },
+        { symbol:'NVDA',  name:'NVIDIA Corp.',       price:875.28, change:15.43 },
+        { symbol:'JPM',   name:'JPMorgan Chase',     price:195.67, change: 1.23 },
+        { symbol:'V',     name:'Visa Inc.',          price:278.45, change: 2.89 },
+        { symbol:'WMT',   name:'Walmart Inc.',       price:165.32, change:-0.87 },
+    ];
+
+    let currentStock = stocks[0];
+    let tradeMode    = 'buy';
+    let portfolio    = { cash:100000, positions:{} };
+    let activityLog  = [];
+    let priceHistory = [];
+    let chartInstance = null;
+
+    // ───────────────────────────────────────────────────────────────
+    // Init
+    // ───────────────────────────────────────────────────────────────
+    function init() {
+        renderStockList();
+        selectStock(stocks[0]);
+        updatePortfolioDisplay();
+        startMarketSimulation();
+        addActivity('System', 'Simulation started with $100,000 cash');
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Stock List
+    // ───────────────────────────────────────────────────────────────
+    function renderStockList() {
+        const list = document.getElementById('stockList');
+        list.innerHTML = stocks.map((s, i) => `
+            <li class="stock-item ${i===0?'active':''}" onclick="selectStock(stocks[${i}])" data-symbol="${s.symbol}">
+                <div class="stock-symbol">${s.symbol}</div>
+                <div class="stock-name">${s.name}</div>
+                <div class="stock-price-mini">
+                    <span class="price-mini">$${s.price.toFixed(2)}</span>
+                    <span class="change-mini ${s.change>=0?'positive':'negative'}">${s.change>=0?'+':''}${s.change.toFixed(2)}</span>
+                </div>
+            </li>`).join('');
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Select Stock
+    // ───────────────────────────────────────────────────────────────
+    function selectStock(stock) {
+        currentStock = stock;
+        document.querySelectorAll('.stock-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.symbol === stock.symbol);
+        });
+        document.getElementById('currentSymbol').textContent = stock.symbol;
+        document.getElementById('currentCompany').textContent = stock.name;
+        document.getElementById('currentPrice').textContent  = `$${stock.price.toFixed(2)}`;
+
+        const pct = ((stock.change / (stock.price - stock.change)) * 100).toFixed(2);
+        const el  = document.getElementById('priceChange');
+        el.textContent  = `${stock.change>=0?'+':''}${stock.change.toFixed(2)} (${stock.change>=0?'+':''}${pct}%)`;
+        el.className    = `price-change ${stock.change>=0?'positive':'negative'}`;
+
+        generatePriceHistory();
+        drawSimChart();
+        updateTradeSummary();
+        updateMarketStats();
+        updateOrderBook();
+        document.getElementById('backtestSymbol').value = stock.symbol;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Simulated Price History
+    // ───────────────────────────────────────────────────────────────
+    function generatePriceHistory() {
+        priceHistory = [];
+        let price = currentStock.price - (Math.random()*10 - 5);
+        for (let i=0; i<100; i++) {
+            price += (Math.random()-0.48)*2;
+            priceHistory.push({
+                time:  new Date(Date.now()-(100-i)*60000),
+                price: Math.max(price, 1),
+                volume: Math.floor(Math.random()*50000)+10000
+            });
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Draw Chart (simulated)
+    // ───────────────────────────────────────────────────────────────
+    function drawSimChart() {
+        const labels = priceHistory.map((_,i) => i);
+        const data   = priceHistory.map(p => p.price);
+        renderChart(labels, data, 'Simulated Price');
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Draw Chart (core)
+    // ───────────────────────────────────────────────────────────────
+    function renderChart(labels, data, label='Price') {
+        const canvas = document.getElementById('stockChart');
+        if (chartInstance) chartInstance.destroy();
+
+        chartInstance = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label,
+                    data,
+                    borderColor: '#00e5ff',
+                    backgroundColor: 'rgba(0,229,255,0.08)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: true,
+                    tension: 0.3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 400 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index', intersect: false,
+                        backgroundColor: 'rgba(10,22,40,0.9)',
+                        titleColor: '#8892a6', bodyColor: '#00e5ff',
+                        callbacks: {
+                            label: ctx => ` $${Number(ctx.parsed.y).toFixed(2)}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid:  { color: 'rgba(74,158,255,0.08)' },
+                        ticks: { color: '#8892a6', callback: v => `$${v.toFixed(0)}` }
+                    }
+                }
+            }
+        });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Load Real Yahoo Finance Data
+    // ───────────────────────────────────────────────────────────────
+    async function loadRealData() {
+        const symbol = currentStock.symbol;
+        const loading = document.getElementById('chartLoading');
+        loading.style.display = 'flex';
+
+        try {
+            const resp = await fetch(`${API_BASE}/market/?symbol=${symbol}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (data.error) throw new Error(data.error);
+
+            renderChart(data.dates, data.prices, `${symbol} (Live)`);
+
+            // Update price display
+            if (data.current_price) {
+                document.getElementById('currentPrice').textContent = `$${data.current_price.toFixed(2)}`;
+            }
+
+            addActivity('Market', `Loaded live data for ${symbol}`);
+        } catch (err) {
+            addActivity('Error', `Live data unavailable: ${err.message}. Using simulated data.`);
+            drawSimChart();
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Market Simulation (price tick)
+    // ───────────────────────────────────────────────────────────────
+    function startMarketSimulation() {
+        setInterval(() => {
+            stocks.forEach(s => {
+                const change = (Math.random()-0.48)*s.price*0.002;
+                s.price  += change;
+                s.change += change;
+            });
+            const updated = stocks.find(s => s.symbol === currentStock.symbol);
+            if (updated) {
+                currentStock = updated;
+                document.getElementById('currentPrice').textContent = `$${updated.price.toFixed(2)}`;
+                const pct = ((updated.change/(updated.price-updated.change))*100).toFixed(2);
+                const el  = document.getElementById('priceChange');
+                el.textContent = `${updated.change>=0?'+':''}${updated.change.toFixed(2)} (${updated.change>=0?'+':''}${pct}%)`;
+                el.className   = `price-change ${updated.change>=0?'positive':'negative'}`;
+            }
+            priceHistory.push({ time:new Date(), price:currentStock.price, volume:Math.floor(Math.random()*50000)+10000 });
+            if (priceHistory.length > 100) priceHistory.shift();
+            renderStockList();
+            updatePortfolioDisplay();
+            updateTradeSummary();
+        }, 2000);
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Timeframe
+    // ───────────────────────────────────────────────────────────────
+    function changeTimeframe(btn, period) {
+        document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        generatePriceHistory();
+        drawSimChart();
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Trade Logic
+    // ───────────────────────────────────────────────────────────────
+    function switchTab(mode) {
+        tradeMode = mode;
+        document.querySelector('.tab-btn:first-child').classList.toggle('active', mode==='buy');
+        document.querySelector('.tab-btn.sell').classList.toggle('active', mode==='sell');
+        const btn = document.getElementById('tradeBtn');
+        btn.className = `trade-btn ${mode==='sell'?'sell':''}`;
+        btn.textContent = mode==='buy' ? 'EXECUTE BUY ORDER' : 'EXECUTE SELL ORDER';
+        updateTradeSummary();
+    }
+
+    function updateTradeSummary() {
+        const qty        = parseInt(document.getElementById('quantity').value) || 0;
+        const price      = currentStock.price;
+        const commission = 1.00;
+        const total      = price * qty + commission;
+        document.getElementById('summaryPrice').textContent      = `$${price.toFixed(2)}`;
+        document.getElementById('summaryQty').textContent        = qty;
+        document.getElementById('summaryCommission').textContent = `$${commission.toFixed(2)}`;
+        document.getElementById('summaryTotal').textContent      = `$${total.toLocaleString('en-US',{minimumFractionDigits:2})}`;
+    }
+
+    function executeTrade() {
+        const qty        = parseInt(document.getElementById('quantity').value) || 0;
+        const price      = currentStock.price;
+        const commission = 1.00;
+        const total      = price * qty + commission;
+
+        if (qty <= 0) { alert('Please enter a valid quantity'); return; }
+
+        if (tradeMode === 'buy') {
+            if (portfolio.cash < total) { alert('Insufficient funds'); return; }
+            portfolio.cash -= total;
+            if (!portfolio.positions[currentStock.symbol]) {
+                portfolio.positions[currentStock.symbol] = { symbol:currentStock.symbol, quantity:0, avgPrice:0, totalCost:0 };
+            }
+            const pos = portfolio.positions[currentStock.symbol];
+            pos.totalCost += total;
+            pos.quantity  += qty;
+            pos.avgPrice   = pos.totalCost / pos.quantity;
+            addActivity('Trade', `Bought ${qty} ${currentStock.symbol} @ $${price.toFixed(2)}`);
+        } else {
+            const pos = portfolio.positions[currentStock.symbol];
+            if (!pos || pos.quantity < qty) { alert('Insufficient shares'); return; }
+            portfolio.cash += (price * qty) - commission;
+            pos.quantity   -= qty;
+            pos.totalCost  -= pos.avgPrice * qty;
+            if (pos.quantity === 0) delete portfolio.positions[currentStock.symbol];
+            addActivity('Trade', `Sold ${qty} ${currentStock.symbol} @ $${price.toFixed(2)}`);
+        }
+        updatePortfolioDisplay();
+        renderPositions();
+    }
+
+    function updatePortfolioDisplay() {
+        let total = portfolio.cash;
+        Object.keys(portfolio.positions).forEach(sym => {
+            const s = stocks.find(x => x.symbol===sym);
+            if (s) total += s.price * portfolio.positions[sym].quantity;
+        });
+        document.getElementById('portfolioValue').textContent =
+            `$${total.toLocaleString('en-US',{minimumFractionDigits:2})}`;
+        renderPositions();
+    }
+
+    function renderPositions() {
+        const el  = document.getElementById('positionsList');
+        const pos = Object.values(portfolio.positions);
+        if (!pos.length) {
+            el.innerHTML = '<div style="color:#8892a6;text-align:center;padding:1.5rem;">No open positions</div>';
+            return;
+        }
+        el.innerHTML = pos.map(p => {
+            const s    = stocks.find(x => x.symbol===p.symbol);
+            if (!s) return '';
+            const val  = s.price * p.quantity;
+            const cost = p.avgPrice * p.quantity;
+            const pnl  = val - cost;
+            const pct  = cost ? ((pnl/cost)*100).toFixed(2) : '0.00';
+            return `
+            <div class="position-item">
+                <div class="position-header">
+                    <span class="position-symbol">${p.symbol}</span>
+                    <span class="position-pnl ${pnl>=0?'positive':'negative'}">${pnl>=0?'+':''}$${pnl.toFixed(2)} (${pnl>=0?'+':''}${pct}%)</span>
+                </div>
+                <div class="position-details">
+                    ${p.quantity} shares @ $${p.avgPrice.toFixed(2)} avg<br>
+                    Current: $${s.price.toFixed(2)} | Value: $${val.toFixed(2)}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Strategy Backtest
+    // ───────────────────────────────────────────────────────────────
+    async function runBacktest() {
+        const symbol   = document.getElementById('backtestSymbol').value || currentStock.symbol;
+        const strategy = document.getElementById('backtestStrategy').value;
+        const box      = document.getElementById('backtestResult');
+        box.classList.add('visible');
+        box.innerHTML  = '<div style="color:#8892a6;">Running backtest…</div>';
+
+        try {
+            const resp = await fetch(`${API_BASE}/backtest/`, {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json' },
+                body: JSON.stringify({ symbol, strategy })
+            });
+            const data = await resp.json();
+            const r = data.result || data;
+            box.innerHTML = Object.entries(r).map(([k,v]) =>
+                `<div class="result-row">
+                    <span class="result-key">${k.replace(/_/g,' ')}</span>
+                    <span class="result-val ${String(v).startsWith('-')?'negative':'positive'}">${v}</span>
+                </div>`
+            ).join('');
+            addActivity('Backtest', `${strategy} on ${symbol} complete`);
+        } catch (err) {
+            box.innerHTML = `<div style="color:var(--red);">Backend offline. Start Django server.<br><small>${err.message}</small></div>`;
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // AI Risk Prediction
+    // ───────────────────────────────────────────────────────────────
+    async function predictRisk() {
+        const box = document.getElementById('riskResult');
+        box.classList.add('visible');
+        box.innerHTML = '<div style="color:#8892a6;">Analysing risk…</div>';
+
+        // Build features from current price history (return_1d, return_5d, return_20d, volatility)
+        const prices = priceHistory.map(p => p.price);
+        const ret1   = prices.length > 1  ? (prices[prices.length-1]/prices[prices.length-2]-1)  : 0;
+        const ret5   = prices.length > 5  ? (prices[prices.length-1]/prices[prices.length-6]-1)  : 0;
+        const ret20  = prices.length > 20 ? (prices[prices.length-1]/prices[prices.length-21]-1) : 0;
+        const rets   = prices.slice(1).map((p,i) => p/prices[i]-1);
+        const vol    = rets.length ? Math.sqrt(rets.reduce((s,r) => s+r*r, 0)/rets.length) : 0;
+        const features = [ret1, ret5, ret20, vol];
+
+        try {
+            const resp = await fetch(`${API_BASE}/risk/`, {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json' },
+                body: JSON.stringify({ features })
+            });
+            const data = await resp.json();
+            const r = data.risk_prediction || data;
+            const labels = {0:'Low', 1:'Medium', 2:'High'};
+            const classes = {0:'risk-low', 1:'risk-medium', 2:'risk-high'};
+            const lvl = r.risk_level ?? -1;
+            box.innerHTML = `
+                <div class="result-row"><span class="result-key">Risk Level</span>
+                    <span class="risk-badge ${classes[lvl]||''}">${labels[lvl]||'Unknown'} (${lvl})</span></div>
+                <div class="result-row"><span class="result-key">Confidence</span>
+                    <span class="result-val">${r.confidence ? (r.confidence*100).toFixed(1)+'%' : '—'}</span></div>
+                ${r.error ? `<div style="color:var(--red);font-size:0.8rem;margin-top:0.5rem;">${r.error}</div>` : ''}
+            `;
+            addActivity('AI Risk', `Risk level: ${labels[lvl]||'Unknown'} (${(r.confidence*100||0).toFixed(1)}% confidence)`);
+        } catch (err) {
+            box.innerHTML = `<div style="color:var(--red);">Backend offline. Start Django server.<br><small>${err.message}</small></div>`;
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Market Stats & Order Book
+    // ───────────────────────────────────────────────────────────────
+    function updateMarketStats() {
+        const prices  = priceHistory.map(p => p.price);
+        const volumes = priceHistory.map(p => p.volume);
+        if (!prices.length) return;
+        document.getElementById('volume').textContent  = (volumes.reduce((a,b)=>a+b,0)/1e6).toFixed(1)+'M';
+        document.getElementById('dayHigh').textContent = '$'+Math.max(...prices).toFixed(2);
+        document.getElementById('dayLow').textContent  = '$'+Math.min(...prices).toFixed(2);
+        document.getElementById('yearHigh').textContent= '$'+(Math.max(...prices)*1.15).toFixed(2);
+    }
+
+    function updateOrderBook() {
+        let html = '';
+        for (let i=0; i<5; i++) {
+            html += `<div class="orderbook-row">
+                <span class="bid-side">$${(currentStock.price-(i*0.05+0.02)).toFixed(2)}</span>
+                <span>${Math.floor(Math.random()*500)+100}</span>
+                <span class="ask-side">$${(currentStock.price+(i*0.05+0.02)).toFixed(2)}</span>
+            </div>`;
+        }
+        document.getElementById('orderBookData').innerHTML = html;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Activity Feed
+    // ───────────────────────────────────────────────────────────────
+    function addActivity(type, message) {
+        activityLog.unshift({ type, message, time:new Date().toLocaleTimeString() });
+        if (activityLog.length > 10) activityLog.pop();
+        document.getElementById('activityFeed').innerHTML = activityLog.map(a =>
+            `<div class="activity-item">
+                <div class="activity-time">${a.time}</div>
+                <div class="activity-text"><strong>${a.type}:</strong> ${a.message}</div>
+            </div>`
+        ).join('');
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Reset
+    // ───────────────────────────────────────────────────────────────
+    function resetSimulation() {
+        if (!confirm('Reset? This clears all positions and restores $100,000 cash.')) return;
+        portfolio = { cash:100000, positions:{} };
+        activityLog = [];
+        addActivity('System', 'Simulation reset to $100,000 cash');
+        updatePortfolioDisplay();
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Event Listeners
+    // ───────────────────────────────────────────────────────────────
+    document.getElementById('quantity').addEventListener('input', updateTradeSummary);
+    document.getElementById('orderType').addEventListener('change', function() {
+        document.getElementById('limitPriceGroup').style.display = this.value==='limit' ? 'block' : 'none';
+    });
+    document.getElementById('stockSearch').addEventListener('input', function() {
+        const q = this.value.toLowerCase();
+        document.querySelectorAll('.stock-item').forEach(item => {
+            const match = item.dataset.symbol.toLowerCase().includes(q) ||
+                          item.querySelector('.stock-name').textContent.toLowerCase().includes(q);
+            item.style.display = match ? 'block' : 'none';
+        });
+    });
+    window.addEventListener('resize', () => {
+        if (chartInstance) chartInstance.resize();
+    });
+
+    // ───────────────────────────────────────────────────────────────
+    // Boot
+    // ───────────────────────────────────────────────────────────────
+    init();
+    </script>
+</body>
+</html>

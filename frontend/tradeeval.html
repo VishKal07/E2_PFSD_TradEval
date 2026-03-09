@@ -1,38 +1,240 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-<title>TradeEval Simulator</title>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradeEval Platform</title>
+
+<style>
+
+body{
+font-family:Arial;
+margin:0;
+background:#0a1628;
+color:white;
+}
+
+/* sections */
+
+.section{
+padding:40px;
+display:none;
+}
+
+#home{
+display:block;
+text-align:center;
+padding:100px;
+}
+
+button{
+padding:10px 20px;
+font-size:16px;
+cursor:pointer;
+background:#4a9eff;
+color:white;
+border:none;
+border-radius:5px;
+}
+
+input,select{
+padding:8px;
+margin:5px;
+}
+
+.panel{
+background:#1a2940;
+padding:20px;
+border-radius:10px;
+margin:10px;
+}
+
+</style>
+
 </head>
 
 <body>
 
-<h2>TradeEval Simulator</h2>
+<!-- HOME PAGE -->
+
+<div id="home" class="section">
+
+<h1>TradeEval</h1>
+<h2>The Flight Simulator for Traders</h2>
+
+<p>
+Practice trading strategies without real risk.
+</p>
+
+<button onclick="openSimulator()">
+Start Simulation
+</button>
+
+</div>
+
+
+<!-- SIMULATOR -->
+
+<div id="simulator" class="section">
+
+<button onclick="goHome()">⬅ Back</button>
+
+<h2>Trading Simulator</h2>
+
+<div class="panel">
+
+<h3>Market</h3>
+
+<select id="stock">
+
+<option>AAPL</option>
+<option>GOOGL</option>
+<option>MSFT</option>
+<option>TSLA</option>
+
+</select>
+
+<button onclick="buy()">Buy</button>
+<button onclick="sell()">Sell</button>
+
+</div>
+
+<div class="panel">
+
+<h3>Portfolio</h3>
+
+<p id="cash">Cash: $100000</p>
+
+<div id="positions"></div>
+
+</div>
+
+
+<div class="panel">
+
+<h3>Run Strategy Backtest</h3>
 
 <input id="symbol" placeholder="Stock Symbol">
 
 <select id="strategy">
+
 <option>moving_average</option>
 <option>momentum</option>
+
 </select>
 
-<button onclick="runBacktest()">Run Strategy</button>
+<button onclick="runBacktest()">
+Run Strategy
+</button>
 
-<h3>Results</h3>
+<pre id="result"></pre>
 
-<div id="result"></div>
+</div>
+
+</div>
+
 
 <script>
+
+/* navigation */
+
+function openSimulator(){
+
+document.getElementById("home").style.display="none"
+document.getElementById("simulator").style.display="block"
+
+}
+
+function goHome(){
+
+document.getElementById("simulator").style.display="none"
+document.getElementById("home").style.display="block"
+
+}
+
+
+/* portfolio */
+
+let cash=100000
+let positions={}
+
+function buy(){
+
+let stock=document.getElementById("stock").value
+let price=100
+
+if(cash<price){
+
+alert("Not enough money")
+return
+
+}
+
+cash-=price
+
+if(!positions[stock])
+positions[stock]=0
+
+positions[stock]+=1
+
+updatePortfolio()
+
+}
+
+function sell(){
+
+let stock=document.getElementById("stock").value
+let price=100
+
+if(!positions[stock]||positions[stock]==0){
+
+alert("No shares")
+return
+
+}
+
+positions[stock]-=1
+cash+=price
+
+updatePortfolio()
+
+}
+
+function updatePortfolio(){
+
+document.getElementById("cash").innerHTML=
+"Cash: $"+cash
+
+let html=""
+
+for(let s in positions){
+
+html+=s+" : "+positions[s]+" shares<br>"
+
+}
+
+document.getElementById("positions").innerHTML=html
+
+}
+
+
+/* backend call */
 
 async function runBacktest(){
 
 let symbol=document.getElementById("symbol").value
 let strategy=document.getElementById("strategy").value
 
-let response=await fetch("http://127.0.0.1:8000/api/backtest/",{
+let response=await fetch(
+"http://127.0.0.1:8000/api/backtest/",
+{
 
 method:"POST",
-headers:{"Content-Type":"application/json"},
+
+headers:{
+"Content-Type":"application/json"
+},
 
 body:JSON.stringify({
 symbol:symbol,
@@ -51,4 +253,5 @@ JSON.stringify(data,null,2)
 </script>
 
 </body>
+
 </html>
