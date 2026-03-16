@@ -65,9 +65,12 @@ TEMPLATES = [
 WSGI_APPLICATION = "tradeeval_backend.wsgi.application"
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+    'default': {
+        'ENGINE': 'djongo',
+        'NAME': 'tradeeval_db',
+        'CLIENT': {
+            'host': 'mongodb://127.0.0.1:27017/',
+        }
     }
 }
 
