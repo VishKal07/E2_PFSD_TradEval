@@ -1,6 +1,57 @@
-version: "3"
+version: "3.9"
+
 services:
+
+  # ── MongoDB ───────────────────────────────────────────────────
   mongo:
-    image: mongo
+    image: mongo:6.0
+    container_name: tradeval_mongo
     ports:
       - "27017:27017"
+    volumes:
+      - mongo_data:/data/db        # data persists across restarts
+    environment:
+      MONGO_INITDB_DATABASE: tradeval
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Django Backend ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tradeval_backend
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app             # live reload during development
+      - ./ml:/ml                   # access to ML models
+      - ./Data:/Data               # access to CSV data
+    env_file:
+      - .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=tradeeval_backend.settings
+      - MONGODB_URI=mongodb://mongo:27017/tradeval
+    depends_on:
+      mongo:
+        condition: service_healthy  # wait for mongo to be ready
+
+  # ── Frontend ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tradeval_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:                      # named volume so data survives restarts
