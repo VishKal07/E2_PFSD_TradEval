@@ -1,11 +1,15 @@
 from pymongo import MongoClient
 from datetime import datetime
 
-client = MongoClient("mongodb://localhost:27017")
+# MongoDB connection
+client = MongoClient("mongodb://127.0.0.1:27017")
 
-db = client["tradeeval"]
+# Database name
+db = client["tradeeval_db"]
 
+# Collection name
 collection = db["results"]
+
 
 def save_result(result):
 
