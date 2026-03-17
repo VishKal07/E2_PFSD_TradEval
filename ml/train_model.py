@@ -77,22 +77,23 @@ if len(data) < 100:
     sys.exit(1)
 
 # ── Risk labels ────────────────────────────────────────────────────────────────
-vol_33 = data["volatility"].quantile(0.33)
-vol_66 = data["volatility"].quantile(0.66)
+return_33  = data["avg_daily_return"].quantile(0.33)
+return_66  = data["avg_daily_return"].quantile(0.66)
+drawdown_threshold = data["max_drawdown"].quantile(0.33)  # worst 33%
 
-def label_risk(v):
-    if v <= vol_33:   return 0   # Low
-    elif v <= vol_66: return 1   # Medium
-    else:             return 2   # High
+def label_risk(row):
+    bad_drawdown  = row["max_drawdown"] < drawdown_threshold
+    negative_ret  = row["avg_daily_return"] < return_33
+    positive_ret  = row["avg_daily_return"] > return_66
 
-data["risk_label"] = data["volatility"].apply(label_risk)
+    if bad_drawdown and negative_ret:
+        return 2   # High risk
+    elif positive_ret and not bad_drawdown:
+        return 0   # Low risk
+    else:
+        return 1   # Medium risk
 
-FEATURES = ["return_1d", "return_5d", "return_20d", "volatility"]
-X = data[FEATURES].values
-y = data["risk_label"].values
-
-print(f"Training samples  : {len(X)}")
-print(f"Class distribution: Low={int(np.sum(y==0))}  Medium={int(np.sum(y==1))}  High={int(np.sum(y==2))}")
+data["risk_label"] = data.apply(label_risk, axis=1)
 
 # ── Train ──────────────────────────────────────────────────────────────────────
 from sklearn.ensemble import RandomForestClassifier
@@ -116,3 +117,25 @@ joblib.dump(model, MODEL_PATH)
 size_kb = MODEL_PATH.stat().st_size / 1024
 print(f"Model saved  ->  {MODEL_PATH}")
 print(f"File size: {size_kb:.1f} KB")
+# save scaler
+joblib.dump(scaler, SCALER_PATH)
+print(f"Scaler saved  →  {SCALER_PATH}")
+
+# save metadata
+import json
+from datetime import datetime
+metadata = {
+    "trained_at":        datetime.now().isoformat(),
+    "features":          FEATURES,
+    "num_features":      len(FEATURES),
+    "training_samples":  int(len(X_train)),
+    "cv_f1_mean":        round(float(cv_scores.mean()), 4),
+    "class_distribution": {
+        "Low":    int(np.sum(y == 0)),
+        "Medium": int(np.sum(y == 1)),
+        "High":   int(np.sum(y == 2)),
+    }
+}
+with open(METADATA_PATH, "w") as f:
+    json.dump(metadata, f, indent=2)
+print(f"Metadata saved →  {METADATA_PATH}")
