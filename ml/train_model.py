@@ -28,12 +28,10 @@ METADATA_PATH = MODEL_DIR / "model_metadata.json"
 # ── MUST match FEATURE_NAMES in risk_model.py exactly ─────────────
 FEATURES = [
     "volatility",
-    "avg_daily_return",
     "max_drawdown",
     "sharpe_ratio",
     "volume_ratio",
 ]
-
 print(f"Data directory : {DATA_DIR}")
 print(f"Model output   : {MODEL_PATH}")
 
