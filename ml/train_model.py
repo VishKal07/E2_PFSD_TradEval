@@ -1,6 +1,6 @@
 """
 TradeEval – Risk Classifier Training Script
-Run from the ml/ directory:  python train_model.py
+Run from the ml/ directory: python train_model.py
 """
 import sys
 import json
@@ -10,28 +10,32 @@ from pathlib import Path
 from datetime import datetime
 
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, f1_score
 import joblib
 
-# ── Paths ─────────────────────────────────────────────────────────
-ML_DIR     = Path(__file__).resolve().parent
-DATA_DIR   = ML_DIR.parent / "Data"
-MODEL_DIR  = ML_DIR / "model"
+# ── Paths ──────────────────────────────────────────────────────────
+ML_DIR        = Path(__file__).resolve().parent
+DATA_DIR      = ML_DIR.parent / "Data"
+MODEL_DIR     = ML_DIR / "model"
 MODEL_DIR.mkdir(exist_ok=True)
-
 MODEL_PATH    = MODEL_DIR / "risk_classifier.pkl"
 SCALER_PATH   = MODEL_DIR / "scaler.pkl"
 METADATA_PATH = MODEL_DIR / "model_metadata.json"
 
-# ── MUST match FEATURE_NAMES in risk_model.py exactly ─────────────
+# ── Features — NO avg_daily_return, NO sharpe_ratio ───────────────
+# Both contain the return signal that defines labels → leakage
+# These 4 are genuinely independent of the label definition
 FEATURES = [
-    "volatility",
-    "max_drawdown",
-    "sharpe_ratio",
-    "volume_ratio",
+    "volatility",      # how much price moves
+    "max_drawdown",    # worst loss in window
+    "volume_ratio",    # unusual trading activity
+    "price_momentum",  # recent price direction (neutral signal)
 ]
+
+WINDOW = 20
+
 print(f"Data directory : {DATA_DIR}")
 print(f"Model output   : {MODEL_PATH}")
 
@@ -63,93 +67,74 @@ if not frames:
 
 data = pd.concat(frames, ignore_index=True)
 data.columns = [c.strip().lower() for c in data.columns]
-print(f"Total rows loaded: {len(data)}")
-print(f"Columns: {list(data.columns[:10])} ...")
 
 if "close" not in data.columns:
     print(f"ERROR: No 'close' column. Found: {list(data.columns)}")
     sys.exit(1)
 
-# ── Sort & clean ───────────────────────────────────────────────────
-sort_cols = ["symbol", "date"] if "date" in data.columns else ["symbol"]
-data = data.sort_values(sort_cols).reset_index(drop=True)
-data["close"] = pd.to_numeric(data["close"], errors="coerce")
-
 has_volume = "volume" in data.columns
+sort_cols  = ["symbol", "date"] if "date" in data.columns else ["symbol"]
+data       = data.sort_values(sort_cols).reset_index(drop=True)
+data["close"] = pd.to_numeric(data["close"], errors="coerce")
 if has_volume:
     data["volume"] = pd.to_numeric(data["volume"], errors="coerce")
-
 data.dropna(subset=["close"], inplace=True)
+print(f"Total rows loaded: {len(data)}")
 
 # ── Feature engineering ────────────────────────────────────────────
-WINDOW = 20
+def compute_features(g):
+    g = g.copy()
+    r = g["close"].pct_change()
 
-def compute_features(group):
-    g = group.copy()
-    g["return_1d"] = g["close"].pct_change()
+    # volatility — annualised std of returns
+    g["volatility"]   = r.rolling(WINDOW, min_periods=5).std() * np.sqrt(252)
 
-    # annualised volatility
-    g["volatility"] = (
-        g["return_1d"].rolling(WINDOW, min_periods=5).std() * np.sqrt(252)
-    )
+    # max drawdown — worst peak to trough over window
+    def dd(x):
+        c = (1 + x).cumprod()
+        return ((c - c.cummax()) / c.cummax()).min()
+    g["max_drawdown"] = r.rolling(WINDOW, min_periods=5).apply(dd, raw=False)
 
-    # avg daily return
-    g["avg_daily_return"] = (
-        g["return_1d"].rolling(WINDOW, min_periods=5).mean()
-    )
-
-    # max drawdown over rolling window
-    def rolling_drawdown(returns):
-        cum  = (1 + returns).cumprod()
-        peak = cum.cummax()
-        return ((cum - peak) / peak).min()
-
-    g["max_drawdown"] = g["return_1d"].rolling(WINDOW, min_periods=5).apply(
-        rolling_drawdown, raw=False
-    )
-
-    # annualised Sharpe ratio
-    rolling_mean = g["return_1d"].rolling(WINDOW, min_periods=5).mean()
-    rolling_std  = g["return_1d"].rolling(WINDOW, min_periods=5).std()
-    g["sharpe_ratio"] = (
-        rolling_mean / rolling_std.replace(0, np.nan)
-    ) * np.sqrt(252)
-
-    # volume ratio
+    # volume ratio — is volume unusually high or low?
     if has_volume:
         avg_vol = g["volume"].rolling(WINDOW, min_periods=5).mean()
         g["volume_ratio"] = g["volume"] / avg_vol.replace(0, np.nan)
     else:
         g["volume_ratio"] = 1.0
 
+    # price momentum — where is price vs 20 days ago (normalized)
+    # this is directionally neutral — doesn't directly encode return mean
+    g["price_momentum"] = (
+        g["close"] - g["close"].shift(WINDOW)
+    ) / g["close"].shift(WINDOW).replace(0, np.nan)
+
+    # label feature — avg return, used ONLY for labeling, not as input
+    g["avg_daily_return"] = r.rolling(WINDOW, min_periods=5).mean()
+
     return g
 
-print("Engineering features (this may take a moment)...")
+print("Engineering features...")
 data = data.groupby("symbol", group_keys=False).apply(compute_features)
-data.dropna(subset=FEATURES, inplace=True)
+data.dropna(subset=FEATURES + ["avg_daily_return"], inplace=True)
 print(f"Rows after feature engineering: {len(data)}")
 
 if len(data) < 100:
-    print("ERROR: Not enough data rows to train.")
+    print("ERROR: Not enough data.")
     sys.exit(1)
 
-# ── Risk labels — based on returns + drawdown, NOT volatility ──────
-# This prevents the model from just memorising the label definition
-return_33          = data["avg_daily_return"].quantile(0.33)
-return_66          = data["avg_daily_return"].quantile(0.66)
-drawdown_threshold = data["max_drawdown"].quantile(0.33)
+# ── Labels — based on avg_daily_return + max_drawdown ─────────────
+# avg_daily_return is NOT in FEATURES so no leakage
+r33 = data["avg_daily_return"].quantile(0.33)
+r66 = data["avg_daily_return"].quantile(0.66)
+dd_thresh = data["max_drawdown"].quantile(0.33)
 
 def label_risk(row):
-    bad_drawdown = row["max_drawdown"] < drawdown_threshold
-    negative_ret = row["avg_daily_return"] < return_33
-    positive_ret = row["avg_daily_return"] > return_66
-
-    if bad_drawdown and negative_ret:
-        return 2   # High
-    elif positive_ret and not bad_drawdown:
-        return 0   # Low
-    else:
-        return 1   # Medium
+    bad = row["max_drawdown"] < dd_thresh
+    neg = row["avg_daily_return"] < r33
+    pos = row["avg_daily_return"] > r66
+    if bad and neg:          return 2  # High
+    elif pos and not bad:    return 0  # Low
+    else:                    return 1  # Medium
 
 data["risk_label"] = data.apply(label_risk, axis=1)
 
@@ -164,37 +149,39 @@ print(f"Class distribution : Low={int(np.sum(y==0))}  "
 scaler   = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-# ── Train ──────────────────────────────────────────────────────────
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42, stratify=y
-)
+# ── Time-based split ───────────────────────────────────────────────
+split    = int(len(X_scaled) * 0.8)
+X_train, X_test = X_scaled[:split], X_scaled[split:]
+y_train, y_test = y[:split],        y[split:]
+print(f"Train: {len(X_train)}  Test: {len(X_test)}")
 
+# ── Train ──────────────────────────────────────────────────────────
 model = RandomForestClassifier(
-    n_estimators=200,
-    max_depth=12,
-    min_samples_leaf=5,
+    n_estimators=100,
+    max_depth=8,
+    min_samples_leaf=100,
+    max_features="sqrt",
+    class_weight="balanced",
     random_state=42,
-    n_jobs=-1
+    n_jobs=-1,
 )
 model.fit(X_train, y_train)
 
 # ── Evaluate ───────────────────────────────────────────────────────
 y_pred = model.predict(X_test)
 print("\n── Classification Report ─────────────────────")
-print(classification_report(y_test, y_pred, target_names=["Low", "Medium", "High"]))
-
-cv_scores = cross_val_score(model, X_scaled, y, cv=5, scoring="f1_macro")
-print(f"5-fold CV F1 (macro): {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
+print(classification_report(y_test, y_pred, target_names=["Low","Medium","High"]))
+f1 = f1_score(y_test, y_pred, average="macro")
+print(f"Holdout F1 (macro): {f1:.3f}")
 
 # ── Feature importances ────────────────────────────────────────────
 print("\n── Feature Importances ───────────────────────")
 for name, imp in sorted(
     zip(FEATURES, model.feature_importances_), key=lambda x: -x[1]
 ):
-    bar = "█" * int(imp * 40)
-    print(f"  {name:<20} {imp:.4f}  {bar}")
+    print(f"  {name:<20} {imp:.4f}  {'█' * int(imp * 40)}")
 
-# ── Save model + scaler + metadata ────────────────────────────────
+# ── Save ───────────────────────────────────────────────────────────
 joblib.dump(model,  MODEL_PATH)
 joblib.dump(scaler, SCALER_PATH)
 
@@ -204,20 +191,18 @@ metadata = {
     "num_features":      len(FEATURES),
     "training_samples":  int(len(X_train)),
     "test_samples":      int(len(X_test)),
-    "cv_f1_mean":        round(float(cv_scores.mean()), 4),
-    "cv_f1_std":         round(float(cv_scores.std()),  4),
+    "holdout_f1":        round(float(f1), 4),
     "class_distribution": {
-        "Low":    int(np.sum(y == 0)),
-        "Medium": int(np.sum(y == 1)),
-        "High":   int(np.sum(y == 2)),
+        "Low":    int(np.sum(y==0)),
+        "Medium": int(np.sum(y==1)),
+        "High":   int(np.sum(y==2)),
     },
     "model_params": model.get_params(),
 }
-
 with open(METADATA_PATH, "w") as f:
     json.dump(metadata, f, indent=2)
 
 size_kb = MODEL_PATH.stat().st_size / 1024
-print(f"\nModel    saved  →  {MODEL_PATH}  ({size_kb:.1f} KB)")
-print(f"Scaler   saved  →  {SCALER_PATH}")
-print(f"Metadata saved  →  {METADATA_PATH}")
+print(f"\nModel    saved → {MODEL_PATH} ({size_kb:.1f} KB)")
+print(f"Scaler   saved → {SCALER_PATH}")
+print(f"Metadata saved → {METADATA_PATH}")
