@@ -2,57 +2,123 @@ import joblib
 import numpy as np
 from pathlib import Path
 
-# Resolve project root: services -> api -> backend -> Project
-BASE_DIR = Path(__file__).resolve().parents[3]
+BASE_DIR      = Path(__file__).resolve().parents[3]
+MODEL_PATH    = BASE_DIR / "ml" / "model" / "risk_classifier.pkl"
+SCALER_PATH   = BASE_DIR / "ml" / "model" / "scaler.pkl"
+META_PATH     = BASE_DIR / "ml" / "model" / "model_metadata.json"
 
-# Correct path: Project/ml/model/risk_classifier.pkl
-MODEL_PATH = BASE_DIR / "ml" / "model" / "risk_classifier.pkl"
+# ── MUST match FEATURES in train_model.py exactly ─────────────────
+FEATURE_NAMES = [
+    "volatility",     # annualised volatility e.g. 0.24 = 24%
+    "max_drawdown",   # peak-to-trough drop   e.g. -0.15
+    "sharpe_ratio",   # annualised Sharpe      e.g. 1.2
+    "volume_ratio",   # recent vol / avg vol   e.g. 1.4
+]
+EXPECTED_FEATURES = len(FEATURE_NAMES)  # 4
+RISK_LABELS       = {0: "Low", 1: "Medium", 2: "High"}
 
-# Load model safely
-model = None
+# ── lazy-loaded globals ────────────────────────────────────────────
+_model  = None
+_scaler = None
 
-if MODEL_PATH.exists():
+
+def _load_artifact(path: Path, name: str):
+    if not path.exists():
+        print(f"[risk_model] WARNING: {name} not found at {path}")
+        return None
     try:
-        model = joblib.load(MODEL_PATH)
-        print(f"[risk_model] Model loaded from {MODEL_PATH}")
+        obj = joblib.load(path)
+        print(f"[risk_model] Loaded {name}")
+        return obj
     except Exception as e:
-        print(f"[risk_model] Failed to load model: {e}")
-        model = None
-else:
-    print(f"[risk_model] WARNING: Model not found at {MODEL_PATH}")
-    print(f"[risk_model] Run: cd ml && python train_model.py")
+        print(f"[risk_model] ERROR loading {name}: {e}")
+        return None
 
 
-def classify_risk(features):
+def _get_model():
+    global _model
+    if _model is None:
+        _model = _load_artifact(MODEL_PATH, "risk_classifier")
+    return _model
+
+
+def _get_scaler():
+    global _scaler
+    if _scaler is None:
+        _scaler = _load_artifact(SCALER_PATH, "scaler")
+    return _scaler
+
+
+def get_model_info() -> dict:
+    """Return metadata about the trained model."""
+    import json
+    if META_PATH.exists():
+        with open(META_PATH) as f:
+            return json.load(f)
+    return {"note": "No metadata found. Run: cd ml && python train_model.py"}
+
+
+def classify_risk(features: list) -> dict:
     """
-    Predict risk level from a list of numeric features.
-    Returns a dict with risk_level and confidence.
+    Predict risk level from numeric features.
+
+    Expected input — list of 4 floats in this exact order:
+        [volatility, max_drawdown, sharpe_ratio, volume_ratio]
+
+    Returns:
+        risk_level   : 0=Low  1=Medium  2=High
+        risk_label   : "Low" / "Medium" / "High"
+        confidence   : float 0.0–1.0
+        probabilities: per-class breakdown
+        features_used: labelled input values
     """
+    model = _get_model()
+
     if model is None:
         return {
+            "error":      "Model not loaded. Run: cd ml && python train_model.py",
             "risk_level": -1,
             "confidence": 0.0,
-            "error": "Model not loaded. Run train_model.py first."
+        }
+
+    # ── validate input ─────────────────────────────────────────────
+    if not isinstance(features, list):
+        return {
+            "error":      f"features must be a list, got {type(features).__name__}",
+            "risk_level": -1,
+            "confidence": 0.0,
+        }
+
+    if len(features) != EXPECTED_FEATURES:
+        return {
+            "error": (
+                f"Expected {EXPECTED_FEATURES} features {FEATURE_NAMES}, "
+                f"got {len(features)}"
+            ),
+            "risk_level": -1,
+            "confidence": 0.0,
         }
 
     try:
-        features_array = np.array(features).reshape(1, -1)
-        prediction = int(model.predict(features_array)[0])
-        probabilities = model.predict_proba(features_array)[0]
-        confidence = float(max(probabilities))
-
-        risk_labels = {0: "Low", 1: "Medium", 2: "High"}
-        label = risk_labels.get(prediction, "Unknown")
-
+        arr = np.array(features, dtype=float).reshape(1, -1)
+    except (ValueError, TypeError):
         return {
-            "risk_level": prediction,
-            "risk_label": label,
-            "confidence": round(confidence, 4)
-        }
-
-    except Exception as e:
-        return {
+            "error":      "All features must be numeric",
             "risk_level": -1,
             "confidence": 0.0,
-            "error": str(e)
         }
+
+    # ── scale if scaler available ──────────────────────────────────
+    scaler = _get_scaler()
+    if scaler is not None:
+        arr = scaler.transform(arr)
+    else:
+        print("[risk_model] WARNING: No scaler — predictions may be inaccurate")
+
+    # ── predict ────────────────────────────────────────────────────
+    try:
+        prediction    = int(model.predict(arr)[0])
+        probabilities = model.predict_proba(arr)[0]
+        confidence    = round(float(max(probabilities)), 4)
+
+        classes   = model.clas
