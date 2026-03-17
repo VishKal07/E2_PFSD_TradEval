@@ -9,11 +9,12 @@ META_PATH     = BASE_DIR / "ml" / "model" / "model_metadata.json"
 
 # ── MUST match FEATURES in train_model.py exactly ─────────────────
 FEATURE_NAMES = [
-    "volatility",     # annualised volatility e.g. 0.24 = 24%
-    "max_drawdown",   # peak-to-trough drop   e.g. -0.15
-    "sharpe_ratio",   # annualised Sharpe      e.g. 1.2
-    "volume_ratio",   # recent vol / avg vol   e.g. 1.4
+    "max_drawdown",
+    "volume_ratio",
+    "high_low_range",
+    "close_position",
 ]
+EXPECTED_FEATURES = 4
 EXPECTED_FEATURES = len(FEATURE_NAMES)  # 4
 RISK_LABELS       = {0: "Low", 1: "Medium", 2: "High"}
 
