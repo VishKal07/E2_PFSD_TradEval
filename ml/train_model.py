@@ -121,11 +121,15 @@ def compute_features(g):
         g["close_position"] = 0.5
 
     return g
-
 print("Engineering features...")
 data = data.groupby("symbol", group_keys=False).apply(compute_features)
+data = data.reset_index(drop=True)  # ← add this line
+# restore symbol column if lost during groupby
+if "symbol" not in data.columns:
+    data["symbol"] = data.index.get_level_values("symbol")
 data.dropna(subset=FEATURES + ["volatility"], inplace=True)
 print(f"Rows after feature engineering: {len(data)}")
+print(f"Columns after engineering: {list(data.columns)}")  # debug check
 
 # ── Labels — volatility regime ONLY ───────────────────────────────
 # We label by volatility but DON'T use volatility as a feature
