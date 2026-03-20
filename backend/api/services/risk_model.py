@@ -2,23 +2,21 @@ import joblib
 import numpy as np
 from pathlib import Path
 
-BASE_DIR      = Path(__file__).resolve().parents[3]
-MODEL_PATH    = BASE_DIR / "ml" / "model" / "risk_classifier.pkl"
-SCALER_PATH   = BASE_DIR / "ml" / "model" / "scaler.pkl"
-META_PATH     = BASE_DIR / "ml" / "model" / "model_metadata.json"
+BASE_DIR   = Path(__file__).resolve().parents[3]
+MODEL_PATH  = BASE_DIR / "ml" / "model" / "risk_classifier.pkl"
+SCALER_PATH = BASE_DIR / "ml" / "model" / "scaler.pkl"
+META_PATH   = BASE_DIR / "ml" / "model" / "model_metadata.json"
 
 # ── MUST match FEATURES in train_model.py exactly ─────────────────
 FEATURE_NAMES = [
-    "max_drawdown",
-    "volume_ratio",
-    "high_low_range",
-    "close_position",
+    "return_1d",
+    "return_5d",
+    "return_20d",
+    "volatility",
 ]
-EXPECTED_FEATURES = 4
-EXPECTED_FEATURES = len(FEATURE_NAMES)  # 4
+EXPECTED_FEATURES = len(FEATURE_NAMES)
 RISK_LABELS       = {0: "Low", 1: "Medium", 2: "High"}
 
-# ── lazy-loaded globals ────────────────────────────────────────────
 _model  = None
 _scaler = None
 
@@ -51,7 +49,6 @@ def _get_scaler():
 
 
 def get_model_info() -> dict:
-    """Return metadata about the trained model."""
     import json
     if META_PATH.exists():
         with open(META_PATH) as f:
@@ -64,12 +61,12 @@ def classify_risk(features: list) -> dict:
     Predict risk level from numeric features.
 
     Expected input — list of 4 floats in this exact order:
-        [volatility, max_drawdown, sharpe_ratio, volume_ratio]
+        [return_1d, return_5d, return_20d, volatility]
 
     Returns:
         risk_level   : 0=Low  1=Medium  2=High
         risk_label   : "Low" / "Medium" / "High"
-        confidence   : float 0.0–1.0
+        confidence   : float 0.0-1.0
         probabilities: per-class breakdown
         features_used: labelled input values
     """
@@ -82,7 +79,6 @@ def classify_risk(features: list) -> dict:
             "confidence": 0.0,
         }
 
-    # ── validate input ─────────────────────────────────────────────
     if not isinstance(features, list):
         return {
             "error":      f"features must be a list, got {type(features).__name__}",
@@ -109,17 +105,34 @@ def classify_risk(features: list) -> dict:
             "confidence": 0.0,
         }
 
-    # ── scale if scaler available ──────────────────────────────────
     scaler = _get_scaler()
     if scaler is not None:
         arr = scaler.transform(arr)
     else:
         print("[risk_model] WARNING: No scaler — predictions may be inaccurate")
 
-    # ── predict ────────────────────────────────────────────────────
     try:
         prediction    = int(model.predict(arr)[0])
         probabilities = model.predict_proba(arr)[0]
         confidence    = round(float(max(probabilities)), 4)
 
-        classes   = model.clas
+        classes   = model.classes_ if hasattr(model, "classes_") else range(len(probabilities))
+        prob_dict = {
+            RISK_LABELS.get(int(c), f"class_{c}"): round(float(p), 4)
+            for c, p in zip(classes, probabilities)
+        }
+
+        return {
+            "risk_level":    prediction,
+            "risk_label":    RISK_LABELS.get(prediction, "Unknown"),
+            "confidence":    confidence,
+            "probabilities": prob_dict,
+            "features_used": dict(zip(FEATURE_NAMES, features)),
+        }
+
+    except Exception as e:
+        return {
+            "risk_level": -1,
+            "confidence": 0.0,
+            "error":      f"Prediction failed: {str(e)}",
+        }
