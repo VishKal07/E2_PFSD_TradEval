@@ -207,3 +207,103 @@ def risk_api(request):
     return JsonResponse({
         "message": "Send a POST request with features array"
     })
+    # ─────────────────────────────────────────────────────────────────
+# Combined Analysis API  — event + risk in one call
+# ─────────────────────────────────────────────────────────────────
+@csrf_exempt
+def analyze_api(request):
+
+    if request.method != "POST":
+        return JsonResponse({
+            "message": "Send a POST request with symbol and strategy"
+        })
+
+    try:
+        body     = json.loads(request.body)
+        symbol   = body.get("symbol",   "AAPL")
+        strategy = body.get("strategy", "moving_average")
+
+        # ── Step 1: event analysis + news sentiment ───────────────
+        from .services.event_analysis import analyze_event
+        event_result = analyze_event(symbol)
+
+        if "error" in event_result:
+            return JsonResponse({
+                "status": "error",
+                "message": event_result["error"]
+            }, status=400)
+
+        # ── Step 2: backtest the strategy ─────────────────────────
+        from .services.backtester import run_backtest
+        backtest_result = run_backtest(symbol, strategy)
+
+        # ── Step 3: build risk features from what we already have ─
+        # These match FEATURE_NAMES in risk_model.py exactly
+        import yfinance as yf
+        import numpy as np
+
+        try:
+            ticker = yf.Ticker(symbol)
+            hist   = ticker.history(period="3mo")
+            prices = hist["Close"].tolist()
+            r      = np.diff(prices) / prices[:-1]
+
+            return_1d  = round(float(r[-1]),          6) if len(r) >= 1  else 0.0
+            return_5d  = round(float(np.mean(r[-5:])), 6) if len(r) >= 5  else 0.0
+            return_20d = round(float(np.mean(r[-20:])),6) if len(r) >= 20 else 0.0
+            volatility = round(float(np.std(r)),       6)
+
+            features = [return_1d, return_5d, return_20d, volatility]
+
+        except Exception:
+            features = [0.0, 0.0, 0.0, 0.0]
+
+        # ── Step 4: risk classification ───────────────────────────
+        from .services.risk_model import classify_risk
+        risk_result = classify_risk(features)
+
+        # ── Step 5: build final combined response ─────────────────
+        combined = {
+            "symbol":   symbol,
+            "strategy": strategy,
+
+            # behavior analysis
+            "behavior_summary":    event_result.get("behavior_summary"),
+            "news_signal":         event_result.get("news_signal"),
+            "volatility_pct":      event_result.get("volatility_pct"),
+            "recent_return_pct":   event_result.get("recent_return_pct"),
+            "avg_sentiment_score": event_result.get("avg_sentiment_score"),
+            "news_breakdown":      event_result.get("news_breakdown", {}),
+            "top_news": event_result.get("news", [])[:3],
+
+            # backtest
+            "backtest": backtest_result,
+
+            # risk
+            "risk_label":    risk_result.get("risk_label"),
+            "risk_level":    risk_result.get("risk_level"),
+            "confidence":    risk_result.get("confidence"),
+            "probabilities": risk_result.get("probabilities", {}),
+
+            # earnings
+            "earnings_calendar": event_result.get("earnings_calendar", {}),
+        }
+
+        # ── Step 6: save to MongoDB ───────────────────────────────
+        save_result({
+            "type":     "full_analysis",
+            "symbol":   symbol,
+            "strategy": strategy,
+            "result":   combined,
+        })
+
+        return JsonResponse({
+            "status": "success",
+            "analysis": combined
+        })
+
+    except Exception as e:
+        return JsonResponse({
+            "status":  "error",
+            "message": str(e)
+        }, status=500)
