@@ -1,18 +1,64 @@
+import os
 from pymongo import MongoClient
+from dotenv import load_dotenv
 from datetime import datetime
 
-# MongoDB connection
-client = MongoClient("mongodb://127.0.0.1:27017")
+load_dotenv()
 
-# Database name
-db = client["tradeeval_db"]
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("MONGO_DB", "tradeeval")
 
-# Collection name
-collection = db["results"]
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+
+users = db["users"]
+trades = db["trades"]
+portfolios = db["portfolios"]
+backtests = db["backtests"]
 
 
-def save_result(result):
+def save_trade(user, symbol, action, price, quantity):
 
-    result["timestamp"] = datetime.utcnow()
+    trade = {
+        "user": user,
+        "symbol": symbol,
+        "action": action,
+        "price": price,
+        "quantity": quantity,
+        "timestamp": datetime.utcnow()
+    }
 
-    collection.insert_one(result)
+    trades.insert_one(trade)
+    return trade
+
+
+def get_portfolio(user):
+
+    portfolio = portfolios.find_one({"user": user})
+
+    if not portfolio:
+        portfolio = {
+            "user": user,
+            "capital": 100000,
+            "positions": {}
+        }
+        portfolios.insert_one(portfolio)
+
+    return portfolio
+
+
+def update_position(user, symbol, qty):
+
+    portfolio = get_portfolio(user)
+
+    positions = portfolio.get("positions", {})
+
+    if symbol not in positions:
+        positions[symbol] = 0
+
+    positions[symbol] += qty
+
+    portfolios.update_one(
+        {"user": user},
+        {"$set": {"positions": positions}}
+    )

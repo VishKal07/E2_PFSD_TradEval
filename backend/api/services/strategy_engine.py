@@ -1,13 +1,19 @@
-from .metrics import calculate_metrics
+import pandas as pd
 
-def run_strategy(symbol, strategy):
-    # Dummy returns for now (replace later)
-    returns = [0.02, -0.01, 0.03, -0.02, 0.01]
 
-    metrics = calculate_metrics(returns)
+def sma_strategy(prices):
 
-    return {
-        "symbol": symbol,
-        "strategy": strategy,
-        "metrics": metrics
-    }
+    df = pd.DataFrame(prices, columns=["price"])
+
+    df["sma20"] = df["price"].rolling(20).mean()
+    df["sma50"] = df["price"].rolling(50).mean()
+
+    signal = "HOLD"
+
+    if df["sma20"].iloc[-1] > df["sma50"].iloc[-1]:
+        signal = "BUY"
+
+    elif df["sma20"].iloc[-1] < df["sma50"].iloc[-1]:
+        signal = "SELL"
+
+    return signal
