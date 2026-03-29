@@ -1,152 +1,108 @@
+import ccxt.async_support as ccxt
 import asyncio
-import websockets
-import json
-import logging
 from datetime import datetime
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from django.core.cache import cache
-from ..models import MarketData
-from django.db import transaction
-import numpy as np
+import logging
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
 class RealTimeDataIngestion:
     def __init__(self):
-        self.websocket_url = "wss://stream.data.alpaca.markets/v2/iex"
-        self.api_key = None  # Set from settings
-        self.batch_buffer = []
-        self.batch_size = 100
-        self.running = False
-        
-    async def connect_and_stream(self, symbols):
-        """Connect to WebSocket and stream real-time data"""
-        self.running = True
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        
-        async with websockets.connect(self.websocket_url, extra_headers=headers) as websocket:
-            # Subscribe to symbols
-            subscribe_msg = {
-                "action": "subscribe",
-                "trades": symbols,
-                "quotes": symbols
-            }
-            await websocket.send(json.dumps(subscribe_msg))
-            
-            # Start batch processor
-            asyncio.create_task(self._process_batch())
-            
-            # Receive messages
-            async for message in websocket:
-                await self._handle_message(message)
-                
-    async def _handle_message(self, message):
-        """Process incoming WebSocket messages"""
-        data = json.loads(message)
-        
-        if 'trades' in data:
-            for trade in data['trades']:
-                market_data = {
-                    'symbol': trade['S'],
-                    'timestamp': datetime.fromisoformat(trade['t']),
-                    'price': trade['p'],
-                    'volume': trade['s'],
-                    'interval': 'tick'
-                }
-                self.batch_buffer.append(market_data)
-                
-                # Cache latest price for quick access
-                cache_key = f"latest_price_{trade['S']}"
-                cache.set(cache_key, trade['p'], timeout=60)
-                
-                # Broadcast via WebSocket to frontend
-                await self._broadcast_price(trade['S'], trade['p'])
-                
-                if len(self.batch_buffer) >= self.batch_size:
-                    await self._flush_batch()
+        self.exchange = None
+        self._init_exchange()
     
-    async def _flush_batch(self):
-        """Flush batch to MongoDB"""
-        if not self.batch_buffer:
-            return
-            
+    def _init_exchange(self):
         try:
-            # Use bulk insert for efficiency
-            market_data_objects = [
-                MarketData(
-                    symbol=item['symbol'],
-                    timestamp=item['timestamp'],
-                    open=item['price'],
-                    high=item['price'],
-                    low=item['price'],
-                    close=item['price'],
-                    volume=item['volume'],
-                    interval='tick'
-                )
-                for item in self.batch_buffer
-            ]
+            self.exchange = ccxt.binance({
+                'rateLimit': 1200,
+                'enableRateLimit': True,
+                'options': {'defaultType': 'spot'},
+                'timeout': 30000,
+            })
+            logger.info("Binance exchange initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize exchange: {e}")
+            raise
+    
+    async def fetch_realtime_data(self, symbol: str, limit: int = 100) -> List[Dict]:
+        if not self.exchange:
+            raise Exception("Exchange not initialized")
+        
+        try:
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, '1m', limit=limit)
             
-            await self._bulk_insert(market_data_objects)
+            if not ohlcv:
+                raise Exception(f"No data returned for {symbol}")
             
-            # Also update aggregated data
-            await self._update_aggregates(self.batch_buffer)
+            data = []
+            for candle in ohlcv:
+                data.append({
+                    'symbol': symbol,
+                    'timestamp': datetime.fromtimestamp(candle[0] / 1000),
+                    'open': candle[1],
+                    'high': candle[2],
+                    'low': candle[3],
+                    'close': candle[4],
+                    'volume': candle[5],
+                    'timeframe': '1m',
+                    'source': 'binance'
+                })
             
-            self.batch_buffer.clear()
+            return data
             
         except Exception as e:
-            logger.error(f"Batch insert failed: {e}")
+            logger.error(f"Error fetching {symbol}: {e}")
+            raise
     
-    async def _update_aggregates(self, ticks):
-        """Update 1min, 5min, 1hour aggregates in real-time"""
-        from collections import defaultdict
+    async def fetch_historical_data(self, symbol: str, since: datetime, until: datetime = None) -> List[Dict]:
+        if not self.exchange:
+            raise Exception("Exchange not initialized")
         
-        aggregates = defaultdict(lambda: {
-            'open': None, 'high': -np.inf, 'low': np.inf, 
-            'close': None, 'volume': 0, 'timestamp': None
-        })
-        
-        for tick in ticks:
-            minute_key = tick['timestamp'].replace(second=0, microsecond=0)
-            agg = aggregates[(tick['symbol'], minute_key)]
+        try:
+            since_ts = int(since.timestamp() * 1000)
+            until_ts = int(until.timestamp() * 1000) if until else None
             
-            if agg['open'] is None:
-                agg['open'] = tick['price']
-                agg['timestamp'] = minute_key
-            agg['high'] = max(agg['high'], tick['price'])
-            agg['low'] = min(agg['low'], tick['price'])
-            agg['close'] = tick['price']
-            agg['volume'] += tick['volume']
-        
-        # Store aggregates
-        for (symbol, timestamp), agg_data in aggregates.items():
-            await MarketData.objects.aupdate_or_create(
-                symbol=symbol,
-                timestamp=timestamp,
-                interval='1min',
-                defaults=agg_data
-            )
+            all_candles = []
+            current_since = since_ts
+            batch_count = 0
+            max_batches = 100
+            
+            while (until_ts is None or current_since < until_ts) and batch_count < max_batches:
+                candles = await self.exchange.fetch_ohlcv(
+                    symbol, '1h', since=current_since, limit=1000
+                )
+                
+                if not candles:
+                    break
+                
+                all_candles.extend(candles)
+                current_since = candles[-1][0] + 1
+                batch_count += 1
+                await asyncio.sleep(self.exchange.rateLimit / 1000)
+            
+            logger.info(f"Fetched {len(all_candles)} historical candles for {symbol}")
+            
+            data = []
+            for candle in all_candles:
+                data.append({
+                    'symbol': symbol,
+                    'timestamp': datetime.fromtimestamp(candle[0] / 1000),
+                    'open': candle[1],
+                    'high': candle[2],
+                    'low': candle[3],
+                    'close': candle[4],
+                    'volume': candle[5],
+                    'timeframe': '1h',
+                    'source': 'binance'
+                })
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching historical data: {e}")
+            raise
     
-    async def _broadcast_price(self, symbol, price):
-        """Broadcast price update to frontend via WebSocket"""
-        channel_layer = get_channel_layer()
-        await channel_layer.group_send(
-            f"prices_{symbol}",
-            {
-                'type': 'price_update',
-                'symbol': symbol,
-                'price': price,
-                'timestamp': datetime.now().isoformat()
-            }
-        )
-    
-    async def _bulk_insert(self, objects):
-        """Bulk insert to MongoDB"""
-        await MarketData.objects.abulk_create(objects)
-    
-    async def _process_batch(self):
-        """Background task to flush batches periodically"""
-        while self.running:
-            await asyncio.sleep(5)
-            if self.batch_buffer:
-                await self._flush_batch()
+    async def close(self):
+        if self.exchange:
+            await self.exchange.close()
+            logger.info("Exchange connection closed")
