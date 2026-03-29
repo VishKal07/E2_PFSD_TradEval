@@ -1,10 +1,8 @@
 import pandas as pd
-<<<<<<< HEAD
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score
-=======
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────
@@ -99,24 +97,19 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report
->>>>>>> 2a09392ae0b99a3752c7c750780483f44f55dcce
 import joblib
 import asyncio
 import logging
 from datetime import datetime, timedelta
 import sys
 import os
-
-<<<<<<< HEAD
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-=======
 scaler   = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(
     X_scaled, y, test_size=0.2, random_state=42, stratify=y
 )
->>>>>>> 2a09392ae0b99a3752c7c750780483f44f55dcce
 
 from trading.services.data_ingestion import RealTimeDataIngestion
 from ml.feature_engineering import FeatureEngineer
@@ -124,8 +117,6 @@ from ml.preprocessing import DataPreprocessor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-<<<<<<< HEAD
 class ModelTrainer:
     def __init__(self):
         self.ingestion = RealTimeDataIngestion()
@@ -253,12 +244,3 @@ class ModelTrainer:
             raise
         finally:
             await self.ingestion.close()
-=======
-# ── Save ───────────────────────────────────────────────────────────
-joblib.dump(model,  MODEL_PATH)
-joblib.dump(scaler, SCALER_PATH)
-
-size_kb = MODEL_PATH.stat().st_size / 1024
-print(f"Model  saved → {MODEL_PATH} ({size_kb:.1f} KB)")
-print(f"Scaler saved → {SCALER_PATH}")
->>>>>>> 2a09392ae0b99a3752c7c750780483f44f55dcce
