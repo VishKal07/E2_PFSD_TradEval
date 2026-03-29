@@ -1,5 +1,0 @@
-django
-numpy
-scikit-learn
-joblib
-pymongo

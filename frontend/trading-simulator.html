@@ -24,7 +24,7 @@
             padding:1rem 2rem; display:flex; justify-content:space-between; align-items:center;
             position:sticky; top:0; z-index:100;
         }
-        .logo { font-family:'Orbitron',sans-serif; font-size:1.5rem; font-weight:900; color:var(--electric-cyan); letter-spacing:2px; text-transform:uppercase; }
+        .logo { font-family:'Orbitron',sans-serif; font-size:1.5rem; font-weight:900; color:var(--electric-cyan); letter-spacing:2px; text-transform:uppercase; text-decoration:none; }
         .header-controls { display:flex; gap:1rem; align-items:center; }
         .balance-display {
             background:rgba(26,41,64,0.6); padding:0.5rem 1.5rem;
@@ -213,9 +213,9 @@
 
     <!-- Header -->
     <div class="header">
-        <a href="tradeEval-website.html" style="text-decoration:none;"><div class="logo">TradeEval</div></a>
+        <a href="/" class="logo" style="text-decoration:none;">TradeEval</a>
         <div class="header-controls">
-            <a href="tradeEval-website.html" class="header-btn">← Back to Home</a>
+            <a href="/" class="header-btn">← Back to Home</a>
             <div class="market-status">
                 <div class="status-dot"></div>
                 <div class="status-text">Simulator Active</div>
@@ -538,7 +538,6 @@
 
             renderChart(data.dates, data.prices, `${symbol} (Live)`);
 
-            // Update price display
             if (data.current_price) {
                 document.getElementById('currentPrice').textContent = `$${data.current_price.toFixed(2)}`;
             }
@@ -701,7 +700,8 @@
                 body: JSON.stringify({ symbol, strategy })
             });
             const data = await resp.json();
-            const r = data.result || data;
+            const r = data;
+            if (r.error) throw new Error(r.error);
             box.innerHTML = Object.entries(r).map(([k,v]) =>
                 `<div class="result-row">
                     <span class="result-key">${k.replace(/_/g,' ')}</span>
@@ -710,48 +710,153 @@
             ).join('');
             addActivity('Backtest', `${strategy} on ${symbol} complete`);
         } catch (err) {
-            box.innerHTML = `<div style="color:var(--red);">Backend offline. Start Django server.<br><small>${err.message}</small></div>`;
+            box.innerHTML = `<div style="color:var(--red);">Backend error: ${err.message}</div>`;
         }
     }
 
     // ───────────────────────────────────────────────────────────────
-    // AI Risk Prediction
+    // AI Risk Prediction - FIXED VERSION
     // ───────────────────────────────────────────────────────────────
     async function predictRisk() {
         const box = document.getElementById('riskResult');
         box.classList.add('visible');
-        box.innerHTML = '<div style="color:#8892a6;">Analysing risk…</div>';
-
-        // Build features from current price history (return_1d, return_5d, return_20d, volatility)
-        const prices = priceHistory.map(p => p.price);
-        const ret1   = prices.length > 1  ? (prices[prices.length-1]/prices[prices.length-2]-1)  : 0;
-        const ret5   = prices.length > 5  ? (prices[prices.length-1]/prices[prices.length-6]-1)  : 0;
-        const ret20  = prices.length > 20 ? (prices[prices.length-1]/prices[prices.length-21]-1) : 0;
-        const rets   = prices.slice(1).map((p,i) => p/prices[i]-1);
-        const vol    = rets.length ? Math.sqrt(rets.reduce((s,r) => s+r*r, 0)/rets.length) : 0;
-        const features = [ret1, ret5, ret20, vol];
-
+        box.innerHTML = '<div style="color:#8892a6;">Fetching market data and analysing risk...</div>';
+        
         try {
-            const resp = await fetch(`${API_BASE}/risk/`, {
+            // First, fetch real market data for the current stock
+            const symbol = currentStock.symbol;
+            const marketResp = await fetch(`${API_BASE}/market/?symbol=${symbol}&period=1mo`);
+            const marketData = await marketResp.json();
+            
+            if (marketData.error) {
+                throw new Error(marketData.error);
+            }
+            
+            const prices = marketData.prices;
+            if (!prices || prices.length < 20) {
+                throw new Error('Insufficient price data (need at least 20 days)');
+            }
+            
+            // Calculate technical indicators
+            const ret_1d = (prices[prices.length-1] - prices[prices.length-2]) / prices[prices.length-2];
+            const ret_5d = (prices[prices.length-1] - prices[prices.length-6]) / prices[prices.length-6];
+            const ret_20d = (prices[prices.length-1] - prices[prices.length-21]) / prices[prices.length-21];
+            
+            // Calculate 20-day volatility
+            const returns20 = [];
+            for (let i = prices.length-20; i < prices.length; i++) {
+                if (i > 0 && prices[i-1] > 0) {
+                    returns20.push((prices[i] - prices[i-1]) / prices[i-1]);
+                }
+            }
+            const meanReturn = returns20.reduce((a,b) => a+b, 0) / returns20.length;
+            const variance = returns20.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / returns20.length;
+            const volatility = Math.sqrt(variance);
+            
+            // Volume ratio
+            const volume = marketData.volume || 1000000;
+            const avgVolume = volume * 0.8;
+            const volume_ratio = volume / avgVolume;
+            
+            // RSI calculation (14-day)
+            let gains = 0, losses = 0;
+            for (let i = prices.length-15; i < prices.length; i++) {
+                if (i > 0 && prices[i-1] > 0) {
+                    const change = (prices[i] - prices[i-1]) / prices[i-1];
+                    if (change > 0) gains += change;
+                    else losses -= change;
+                }
+            }
+            const avgGain = gains / 14;
+            const avgLoss = losses / 14;
+            const rs = avgGain / avgLoss;
+            const rsi = 100 - (100 / (1 + rs));
+            
+            // Prepare features array (6 features expected by the model)
+            const features = [ret_1d, ret_5d, ret_20d, volatility, volume_ratio, rsi];
+            
+            box.innerHTML = '<div style="color:#8892a6;">Analysing with ML model...</div>';
+            
+            // Call risk API
+            const riskResp = await fetch(`${API_BASE}/risk/`, {
                 method: 'POST',
-                headers: { 'Content-Type':'application/json' },
-                body: JSON.stringify({ features })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ features: features })
             });
-            const data = await resp.json();
-            const r = data.risk_prediction || data;
-            const labels = {0:'Low', 1:'Medium', 2:'High'};
-            const classes = {0:'risk-low', 1:'risk-medium', 2:'risk-high'};
-            const lvl = r.risk_level ?? -1;
+            
+            const riskData = await riskResp.json();
+            
+            const riskLabels = {0: 'Low', 1: 'Medium', 2: 'High'};
+            const riskClasses = {0: 'risk-low', 1: 'risk-medium', 2: 'risk-high'};
+            const riskColors = {0: '#00ff88', 1: '#ffa726', 2: '#ff4757'};
+            
+            const riskLevel = riskData.risk_level;
+            const confidence = (riskData.confidence * 100).toFixed(1);
+            
             box.innerHTML = `
-                <div class="result-row"><span class="result-key">Risk Level</span>
-                    <span class="risk-badge ${classes[lvl]||''}">${labels[lvl]||'Unknown'} (${lvl})</span></div>
-                <div class="result-row"><span class="result-key">Confidence</span>
-                    <span class="result-val">${r.confidence ? (r.confidence*100).toFixed(1)+'%' : '—'}</span></div>
-                ${r.error ? `<div style="color:var(--red);font-size:0.8rem;margin-top:0.5rem;">${r.error}</div>` : ''}
+                <div class="result-row">
+                    <span class="result-key">Risk Level</span>
+                    <span class="risk-badge ${riskClasses[riskLevel] || ''}" style="color:${riskColors[riskLevel]}">
+                        ${riskLabels[riskLevel] || 'Unknown'} (Level ${riskLevel})
+                    </span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">Confidence</span>
+                    <span class="result-val" style="color:${riskColors[riskLevel]}">${confidence}%</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">Volatility (20d)</span>
+                    <span class="result-val">${(volatility * 100).toFixed(2)}%</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">RSI (14)</span>
+                    <span class="result-val">${rsi.toFixed(2)}</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">1-Day Return</span>
+                    <span class="result-val ${ret_1d >= 0 ? 'positive' : 'negative'}">${(ret_1d * 100).toFixed(2)}%</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">20-Day Return</span>
+                    <span class="result-val ${ret_20d >= 0 ? 'positive' : 'negative'}">${(ret_20d * 100).toFixed(2)}%</span>
+                </div>
+                <div style="margin-top:0.8rem; padding-top:0.5rem; border-top:1px solid rgba(74,158,255,0.2); font-size:0.7rem; color:#8892a6;">
+                    Model: Random Forest Classifier | Features: 6 technical indicators
+                </div>
             `;
-            addActivity('AI Risk', `Risk level: ${labels[lvl]||'Unknown'} (${(r.confidence*100||0).toFixed(1)}% confidence)`);
+            
+            addActivity('AI Risk', `Risk level: ${riskLabels[riskLevel]} (${confidence}% confidence) for ${symbol}`);
+            
         } catch (err) {
-            box.innerHTML = `<div style="color:var(--red);">Backend offline. Start Django server.<br><small>${err.message}</small></div>`;
+            console.error('Risk prediction error:', err);
+            box.innerHTML = `
+                <div style="color:var(--red);">
+                    <strong>Error:</strong> ${err.message}<br>
+                    <small>Make sure Django server is running on port 8000</small>
+                </div>
+                <div class="result-row" style="margin-top:0.8rem;">
+                    <span class="result-key">Fallback Calculation</span>
+                    <span class="result-val">Using price volatility</span>
+                </div>
+            `;
+            
+            // Fallback: Simple risk calculation using price change
+            const volatility = Math.abs(currentStock.change / (currentStock.price - currentStock.change)) * 100;
+            let fallbackRisk = 1;
+            if (volatility > 3) fallbackRisk = 2;
+            else if (volatility < 1) fallbackRisk = 0;
+            
+            const riskLabels = {0: 'Low', 1: 'Medium', 2: 'High'};
+            box.innerHTML += `
+                <div class="result-row">
+                    <span class="result-key">Fallback Risk</span>
+                    <span class="result-val">${riskLabels[fallbackRisk]}</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-key">Volatility (est)</span>
+                    <span class="result-val">${volatility.toFixed(2)}%</span>
+                </div>
+            `;
         }
     }
 
